@@ -1,0 +1,106 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Where to publish
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install build tooling
+        run: pip install build twine
+
+      - name: Check the tag matches the package version
+        if: github.event_name == 'release'
+        run: |
+          python - <<'PY'
+          import os, re, sys, pathlib
+          source = pathlib.Path('indico_sentry/__init__.py').read_text(encoding='utf-8')
+          version = re.search(r"^__version__ = '([^']+)'", source, re.M).group(1)
+          tag = os.environ['TAG'].removeprefix('v')
+          if tag != version:
+              sys.exit(f'tag {tag!r} does not match __version__ {version!r}')
+          print(f'publishing version {version}')
+          PY
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check metadata
+        run: twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/indico-plugin-sentry
+    permissions:
+      # Required for trusted publishing (OIDC); no API token needed.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # Leave unset to use trusted publishing. If you would rather use an
+          # API token, add it as the TEST_PYPI_API_TOKEN secret.
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          skip-existing: true
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/indico-plugin-sentry
+    permissions:
+      # Required for trusted publishing (OIDC); no API token needed.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Leave unset to use trusted publishing. If you would rather use an
+          # API token, add it as the PYPI_API_TOKEN secret.
+          password: ${{ secrets.PYPI_API_TOKEN }}

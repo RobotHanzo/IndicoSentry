@@ -1,0 +1,97 @@
+{% from 'message_box.html' import message_box %}
+
+{% macro render_status(status, active, sdk_version, pending, test_url, reload_url) %}
+    <div class="i-box-group vert" style="margin-top: 2em;">
+        <div class="i-box">
+            <div class="i-box-header">
+                <div class="i-box-title">{% trans %}Status of this worker{% endtrans %}</div>
+            </div>
+            <div class="i-box-content">
+                {% if status.error %}
+                    {% call message_box('error') %}
+                        {% trans error=status.error %}Sentry could not be initialised: {{ error }}{% endtrans %}
+                    {% endcall %}
+                {% elif not active %}
+                    {% call message_box('warning') %}
+                        {% trans -%}
+                            Sentry is loaded but inactive because no DSN is configured. Set one above (or as
+                            SENTRY_DSN in indico.conf) and restart Indico.
+                        {%- endtrans %}
+                    {% endcall %}
+                {% else %}
+                    {% call message_box('success') %}
+                        {% trans %}Sentry is active and events are being sent.{% endtrans %}
+                    {% endcall %}
+                {% endif %}
+
+                {% if pending %}
+                    {% call message_box('warning') %}
+                        {% trans settings=pending|join(', ') -%}
+                            These settings were saved but are not applied in this worker yet: {{ settings }}.
+                            Restart Indico (and the Celery workers) to apply them everywhere.
+                        {%- endtrans %}
+                    {% endcall %}
+                {% endif %}
+
+                <table class="i-table-widget">
+                    <tbody>
+                        <tr>
+                            <td>{% trans %}Sentry host{% endtrans %}</td>
+                            <td>
+                                {%- if status.dsn_host -%}
+                                    <code>{{ status.dsn_host }}</code>
+                                    <span class="text-not-important">
+                                        ({% trans source=status.dsn_source %}from {{ source }}{% endtrans %})
+                                    </span>
+                                {%- else -%}
+                                    <em>{% trans %}not configured{% endtrans %}</em>
+                                {%- endif -%}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>{% trans %}Environment{% endtrans %}</td>
+                            <td><code>{{ status.environment or '-' }}</code></td>
+                        </tr>
+                        <tr>
+                            <td>{% trans %}Release{% endtrans %}</td>
+                            <td><code>{{ status.release or '-' }}</code></td>
+                        </tr>
+                        <tr>
+                            <td>{% trans %}Integrations{% endtrans %}</td>
+                            <td>{{ status.integrations|join(', ') or '-' }}</td>
+                        </tr>
+                        <tr>
+                            <td>{% trans %}Versions{% endtrans %}</td>
+                            <td>
+                                {% trans %}plugin{% endtrans %} {{ status.plugin_version }},
+                                sentry-sdk {{ sdk_version }}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="toolbar" style="margin-top: 1em;">
+                    <form method="POST" action="{{ test_url }}" style="display: inline;">
+                        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+                        <button type="submit" class="i-button icon-checkmark" {{ 'disabled' if not active }}>
+                            {%- trans %}Send test event{% endtrans -%}
+                        </button>
+                    </form>
+                    <form method="POST" action="{{ reload_url }}" style="display: inline;">
+                        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+                        <button type="submit" class="i-button icon-loop">
+                            {%- trans %}Reload in this worker{% endtrans -%}
+                        </button>
+                    </form>
+                </div>
+                <p class="text-not-important">
+                    {% trans -%}
+                        Sentry is configured once per worker process. Settings marked "requires a restart" only
+                        take effect after Indico is restarted; "Reload in this worker" applies them to the single
+                        process serving this page, which is useful for testing a new DSN.
+                    {%- endtrans %}
+                </p>
+            </div>
+        </div>
+    </div>
+{% endmacro %}
