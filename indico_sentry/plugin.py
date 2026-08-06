@@ -11,7 +11,7 @@ import copy
 import sentry_sdk
 
 from indico.core import signals
-from indico.core.plugins import IndicoPlugin, PluginCategory, get_plugin_template_module, url_for_plugin
+from indico.core.plugins import IndicoPlugin, get_plugin_template_module, url_for_plugin
 
 from indico_sentry.blueprint import blueprint
 from indico_sentry.cli import cli
@@ -34,7 +34,12 @@ class SentryPlugin(IndicoPlugin):
     """
 
     configurable = True
-    category = PluginCategory.other
+    # NOTE: do not set `category = PluginCategory.other`.  RHPlugins builds the
+    # category buckets and then does `ordered_categories[PluginCategory.other] =
+    # <uncategorised plugins>`, which overwrites the bucket holding plugins that
+    # explicitly declared that category - they disappear from the admin list.
+    # Leaving `category` unset puts us in the uncategorised list, which is what
+    # actually gets rendered under "Other".
     settings_form = SettingsForm
     default_settings = copy.deepcopy(DEFAULT_SETTINGS)
     settings_form_field_opts = {

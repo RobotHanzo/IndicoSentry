@@ -38,6 +38,12 @@ class TestPluginMetadata:
     def test_has_a_version(self):
         assert indico_sentry.__version__
 
+    def test_has_no_category(self):
+        # Indico's RHPlugins fills the PluginCategory.other bucket with the
+        # *uncategorised* plugins, overwriting whatever declared that category
+        # explicitly - such a plugin silently vanishes from the admin list.
+        assert SentryPlugin.category is None
+
 
 class TestSettingsMatchForm:
     def test_every_form_field_has_a_default(self):
