@@ -1,6 +1,90 @@
 {% from 'message_box.html' import message_box %}
 
-{% macro render_status(status, active, sdk_version, pending, test_url, reload_url) %}
+{# Defined before `render_status`, which calls it. #}
+{% macro render_frontend_status(frontend) %}
+    <div class="i-box">
+        <div class="i-box-header">
+            <div class="i-box-title">{% trans %}Browser errors{% endtrans %}</div>
+        </div>
+        <div class="i-box-content">
+            {% if not frontend.requested %}
+                {% call message_box('info') %}
+                    {% trans -%}
+                        Browser errors are not being reported. Turn on "Report browser errors" above and give it a
+                        Sentry DSN of its own to load the JavaScript SDK on every page.
+                    {%- endtrans %}
+                {% endcall %}
+            {% elif not frontend.enabled %}
+                {% call message_box('warning') %}
+                    {% trans %}Browser error reporting is on but has no DSN, so nothing is being loaded.{% endtrans %}
+                {% endcall %}
+            {% else %}
+                {% call message_box('success') %}
+                    {% trans -%}
+                        The Sentry JavaScript SDK is being loaded on every page. This applies immediately - no
+                        restart needed.
+                    {%- endtrans %}
+                {% endcall %}
+            {% endif %}
+
+            <table class="i-table-widget">
+                <tbody>
+                    <tr>
+                        <td>{% trans %}Sentry host{% endtrans %}</td>
+                        <td>
+                            {%- if frontend.dsn_host -%}
+                                <code>{{ frontend.dsn_host }}</code>
+                            {%- else -%}
+                                <em>{% trans %}not configured{% endtrans %}</em>
+                            {%- endif -%}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>{% trans %}Environment{% endtrans %}</td>
+                        <td><code>{{ frontend.environment or '-' }}</code></td>
+                    </tr>
+                    <tr>
+                        <td>{% trans %}Release{% endtrans %}</td>
+                        <td><code>{{ frontend.release or '-' }}</code></td>
+                    </tr>
+                    <tr>
+                        <td>{% trans %}SDK bundle{% endtrans %}</td>
+                        <td>
+                            <code>{{ frontend.sdk_url }}</code>
+                            {%- if not frontend.sdk_version %}
+                                <span class="text-not-important">({% trans %}custom URL{% endtrans %})</span>
+                            {%- endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>{% trans %}Tracing / replay{% endtrans %}</td>
+                        <td>
+                            {% trans rate=frontend.traces_sample_rate %}traces {{ rate }}{% endtrans %},
+                            {%- if frontend.replay %}
+                                {% trans %}replay on{% endtrans %}
+                            {%- else %}
+                                {% trans %}replay off{% endtrans %}
+                            {%- endif %}
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            {% if frontend.enabled %}
+                <p class="text-not-important">
+                    {% trans -%}
+                        If this instance runs with CSP_ENABLED, the plugin adds the SDK host to script-src by
+                        itself. Sending the events is a cross-origin request, so a connect-src in CSP_DIRECTIVES
+                        (and worker-src blob: for session replay) has to allow the Sentry host as well:
+                    {%- endtrans %}
+                    <code>connect-src 'self' {{ frontend.csp_connect_src }}</code>
+                </p>
+            {% endif %}
+        </div>
+    </div>
+{% endmacro %}
+
+{% macro render_status(status, active, sdk_version, pending, frontend, test_url, reload_url) %}
     <div class="i-box-group vert" style="margin-top: 2em;">
         <div class="i-box">
             <div class="i-box-header">
@@ -93,5 +177,9 @@
                 </p>
             </div>
         </div>
+
+        {% if frontend %}
+            {{ render_frontend_status(frontend) }}
+        {% endif %}
     </div>
 {% endmacro %}

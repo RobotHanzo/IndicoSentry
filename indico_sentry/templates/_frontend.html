@@ -1,0 +1,94 @@
+{# Boots the Sentry JavaScript SDK.  Injected into the head of every Indico
+   page through the `html-head` template hook.
+
+   The inline script below must keep its opening tag free of attributes:
+   Indico's template loader looks for exactly that and rewrites it to carry
+   the page's CSP nonce, and an opening tag with attributes would miss out. #}
+
+{% macro render_frontend(ctx) %}
+    {%- if ctx.trace %}
+    <meta name="sentry-trace" content="{{ ctx.trace.sentry_trace }}">
+        {%- if ctx.trace.baggage %}
+    <meta name="baggage" content="{{ ctx.trace.baggage }}">
+        {%- endif %}
+    {%- endif %}
+    <script id="indico-sentry-sdk" src="{{ ctx.sdk_url }}"
+            {%- if ctx.sdk_integrity %} integrity="{{ ctx.sdk_integrity }}"{% endif %}
+            crossorigin="anonymous" defer></script>
+    <script>
+        (function () {
+            var options = {{ ctx.options | tojson }};
+            var user = {{ ctx.user | tojson }};
+            var tags = {{ ctx.tags | tojson }};
+            var replayOptions = {{ ctx.replay | tojson }};
+            var pending = [];
+
+            // The SDK is deferred so it does not block rendering, which leaves
+            // a window in which nothing is listening.  Hold on to whatever
+            // breaks during it and report it once Sentry is up.
+            function remember(evt) {
+                if (pending.length < 10) {
+                    pending.push((evt && (evt.error || evt.reason)) || (evt && evt.message) || 'Unknown error');
+                }
+            }
+
+            function stopBuffering() {
+                window.removeEventListener('error', remember);
+                window.removeEventListener('unhandledrejection', remember);
+                pending = [];
+            }
+
+            window.addEventListener('error', remember);
+            window.addEventListener('unhandledrejection', remember);
+
+            function start() {
+                var Sentry = window.Sentry;
+                var buffered = pending;
+                stopBuffering();
+                if (!Sentry || !Sentry.init) {
+                    return;
+                }
+                // Which of these exist depends on the bundle that was loaded,
+                // which in turn is picked from the sample rates below.
+                var integrations = [];
+                if (options.tracesSampleRate > 0 && Sentry.browserTracingIntegration) {
+                    integrations.push(Sentry.browserTracingIntegration());
+                }
+                if ((options.replaysSessionSampleRate > 0 || options.replaysOnErrorSampleRate > 0) &&
+                        Sentry.replayIntegration) {
+                    integrations.push(Sentry.replayIntegration(replayOptions));
+                }
+                if (integrations.length) {
+                    options.integrations = integrations;
+                }
+                Sentry.init(options);
+                if (user) {
+                    Sentry.setUser(user);
+                }
+                if (tags) {
+                    Sentry.setTags(tags);
+                }
+                for (var i = 0; i < buffered.length; i++) {
+                    try {
+                        Sentry.captureException(buffered[i]);
+                    } catch (e) {
+                        // Nothing useful left to do if reporting itself fails.
+                    }
+                }
+            }
+
+            if (window.Sentry && window.Sentry.init) {
+                start();
+            } else {
+                var script = document.getElementById('indico-sentry-sdk');
+                if (script) {
+                    script.addEventListener('load', start);
+                    // Blocked by an ad blocker, a CSP or a failing CDN.
+                    script.addEventListener('error', stopBuffering);
+                } else {
+                    stopBuffering();
+                }
+            }
+        })();
+    </script>
+{% endmacro %}

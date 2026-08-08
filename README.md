@@ -11,12 +11,14 @@ richer one and moves the configuration into the admin area.
 | | Indico core | This plugin |
 |---|---|---|
 | Configuration | `indico.conf` only | Admin UI, with `indico.conf` as fallback |
+| Scope | Server only | Server + browser, separate projects |
 | Integrations | Flask, logging, Redis, pure_eval | + Celery, + SQLAlchemy (optional) |
 | Performance tracing | – | Per-endpoint sample rates |
 | Profiling | – | Yes |
 | Error filtering | – | By exception, logger or endpoint |
 | Data scrubbing | SDK defaults | Configurable field list, query strings, breadcrumbs |
 | Indico context | user, endpoint, RH class | + event, category, contribution, registration |
+| Browser errors | – | Sentry's JavaScript SDK, with a DSN of its own |
 | Test event | – | Button on the settings page and `indico sentry test` |
 
 ## Requirements
@@ -87,6 +89,60 @@ what these lists and the sample-rate overrides match against.
 - **Scrubbed fields** — any field whose name *contains* one of these fragments is replaced with
   `[Filtered]`, in the request body, cookies, headers, query string, breadcrumbs, tags and extras.
 
+### Frontend (browser)
+
+The Python SDK only ever sees the server half of a page. Turn on **Report browser errors** and give
+it a **Browser DSN** to also load [Sentry's JavaScript SDK](https://docs.sentry.io/platforms/javascript/)
+on every Indico page.
+
+Use a *separate Sentry project* from the server one. The browser DSN is public — it ends up in the
+HTML of every page, so anyone can send events to it — and browser errors are far noisier than server
+errors, mostly thanks to extensions and flaky connections. Mixing the two makes the backend project
+much less useful.
+
+The SDK is loaded from Sentry's CDN, version-pinned and verified with a SHA-384 subresource integrity
+hash. Only the smallest bundle that covers what you enabled is used, so the plain error-reporting
+setup costs visitors ~90 kB and tracing or replay is only downloaded if you asked for it. Point
+**Custom SDK URL** at your own copy if you would rather not use the CDN.
+
+| Setting | Notes |
+|---|---|
+| `Report browser errors` | Master switch; nothing is injected while it is off |
+| `Browser DSN` | Separate Sentry project, see above |
+| `Browser environment` / `Browser release` | Default to the server-side values |
+| `Browser trace sample rate` | Page-load and navigation tracing |
+| `Session replay sample rate` | Fraction of sessions recorded; text masked, media blocked |
+| `Replay on error sample rate` | Additional replays for sessions that hit an error |
+| `Link browser and server traces` | Emits `sentry-trace` / `baggage` meta tags |
+| `Trace propagation targets` | Where browser requests may carry trace headers, default same-origin |
+| `Ignored browser errors` / `Denied script URLs` | Filtering, defaults cover the usual browser noise |
+
+The privacy settings are shared with the server side: turning **Send personal data** off also stops
+the browser SDK from attaching the user, and **Send user email and name** decides whether it sends
+more than the numeric user id. Session replays are always masked.
+
+None of the frontend settings need a restart — the snippet is rebuilt from the settings on every
+page render.
+
+Two things are not injected on purpose: pages of an *offline event copy* (a static site must work
+without a network), and anything while the master switch is off.
+
+#### Content-Security-Policy
+
+If the instance runs with `CSP_ENABLED`, the plugin adds the SDK host to `script-src` by itself
+through the `get_csp_script_sources` signal. Sending the events is a cross-origin request, so if you
+set a `connect-src` in `CSP_DIRECTIVES` you have to allow the Sentry ingest host there yourself:
+
+```python
+CSP_DIRECTIVES = {
+    "connect-src 'self' https://o0.ingest.sentry.io",
+    # only needed for session replay, which records in a web worker
+    "worker-src 'self' blob:",
+}
+```
+
+The plugin settings page shows the exact host to use.
+
 ## Which settings need a restart?
 
 Sentry is configured once per worker process, so anything that goes into the client itself needs a
@@ -95,9 +151,9 @@ restart of Indico and the Celery workers:
 `dsn`, `environment`, `release`, `server_name`, `logging_level`, `max_breadcrumbs`,
 `attach_stacktrace`, and the integration toggles.
 
-Everything else — sample rates, filtering, scrubbing, privacy and context options — is evaluated per
-event and takes effect within 30 seconds (the settings cache TTL). The settings page tells you which
-saved settings the current worker has not picked up yet.
+Everything else — sample rates, filtering, scrubbing, privacy, context and all of the frontend
+options — is evaluated per event or per page and takes effect within 30 seconds (the settings cache
+TTL). The settings page tells you which saved settings the current worker has not picked up yet.
 
 **Reload in this worker** rebuilds the client in the single process that served the page. It is meant
 for testing a new DSN, not as a substitute for a restart.
@@ -117,6 +173,11 @@ indico sentry test --crash   # send a real exception with a stack trace
 Core calls `sentry_sdk.init()` in `make_app()` before plugins are loaded. This plugin re-initialises
 the SDK on the `app_created` signal, which replaces the global client and closes the old one. If you
 remove the plugin, core's client stays in charge and keeps using `indico.conf`.
+
+The browser snippet goes in through the `html-head` template hook, so it is on every page that uses
+Indico's standard layout. Indico rewrites the inline `<script>` to carry the page's CSP nonce.
+Browser support for the CSP `script-src` signal needs Indico 3.3.10 or newer; on older versions the
+plugin simply skips it, and there is no CSP to satisfy anyway.
 
 ## Development
 

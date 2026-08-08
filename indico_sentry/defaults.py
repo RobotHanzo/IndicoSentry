@@ -48,6 +48,29 @@ DEFAULT_IGNORED_TRANSACTIONS = [
     'core.health_check',
 ]
 
+#: Browser errors that are noise rather than bugs: layout callbacks browsers
+#: fire on themselves, and the failures every page gets when a visitor loses
+#: connectivity or navigates away mid-request.
+DEFAULT_FRONTEND_IGNORED_ERRORS = [
+    'ResizeObserver loop limit exceeded',
+    'ResizeObserver loop completed with undelivered notifications',
+    'Non-Error promise rejection captured',
+    'NetworkError when attempting to fetch resource',
+    'Failed to fetch',
+    'Load failed',
+    'AbortError',
+]
+
+#: Scripts that are not ours.  Browser extensions inject code into every page
+#: and their exceptions would otherwise show up as Indico errors.
+DEFAULT_FRONTEND_DENIED_URLS = [
+    'chrome-extension://',
+    'chrome://',
+    'moz-extension://',
+    'safari-extension://',
+    'safari-web-extension://',
+]
+
 DEFAULT_SETTINGS = {
     # --- connection (init-only) ---
     'dsn': '',
@@ -78,6 +101,21 @@ DEFAULT_SETTINGS = {
     # --- indico context (live) ---
     'event_context': True,
     'category_context': True,
+    # --- frontend / browser (live) ---
+    # The browser SDK is configured from scratch on every page render, so none
+    # of these need a restart.
+    'frontend_enabled': False,
+    'frontend_dsn': '',
+    'frontend_environment': '',
+    'frontend_release': '',
+    'frontend_traces_sample_rate': 0.0,
+    'frontend_replay_session_sample_rate': 0.0,
+    'frontend_replay_error_sample_rate': 0.0,
+    'frontend_trace_propagation_targets': [],
+    'frontend_ignored_errors': DEFAULT_FRONTEND_IGNORED_ERRORS,
+    'frontend_denied_urls': DEFAULT_FRONTEND_DENIED_URLS,
+    'frontend_link_traces': True,
+    'frontend_sdk_url': '',
 }
 
 #: Log levels offered for the logging integration.

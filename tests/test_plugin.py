@@ -70,6 +70,11 @@ class TestSettingsMatchForm:
         missing = INIT_ONLY_SETTINGS - set(DEFAULT_SETTINGS)
         assert not missing, f'unknown init-only settings: {sorted(missing)}'
 
+    def test_frontend_settings_are_live(self):
+        # The browser snippet is rebuilt on every page, so nothing about it
+        # may claim to need a restart.
+        assert not {key for key in INIT_ONLY_SETTINGS if key.startswith('frontend_')}
+
     def test_defaults_are_json_serializable(self):
         # Indico stores plugin settings as JSON.
         import json
@@ -99,14 +104,26 @@ class TestBlueprint:
 
 
 class TestTemplate:
-    def test_details_template_parses(self):
-        source = (Path(indico_sentry.__file__).parent / 'templates' / '_details.html').read_text(encoding='utf-8')
+    @pytest.mark.parametrize('name', ('_details.html', '_frontend.html'))
+    def test_template_parses(self, name):
         env = Environment(extensions=['jinja2.ext.i18n'], autoescape=True)
-        env.parse(source)
+        env.parse(template_source(name))
 
     def test_details_template_defines_the_macro(self):
-        source = (Path(indico_sentry.__file__).parent / 'templates' / '_details.html').read_text(encoding='utf-8')
-        assert 'macro render_status(' in source
+        assert 'macro render_status(' in template_source('_details.html')
+
+    def test_frontend_template_defines_the_macro(self):
+        assert 'macro render_frontend(' in template_source('_frontend.html')
+
+    def test_templates_are_where_the_build_looks_for_them(self):
+        # The wheel ships `indico_sentry/templates/*.html`; a template
+        # anywhere else would be missing at runtime.
+        directory = Path(indico_sentry.__file__).parent / 'templates'
+        assert {'_details.html', '_frontend.html'} <= {path.name for path in directory.glob('*.html')}
+
+
+def template_source(name):
+    return (Path(indico_sentry.__file__).parent / 'templates' / name).read_text(encoding='utf-8')
 
 
 class _FakeSetupState:

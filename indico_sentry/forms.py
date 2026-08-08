@@ -12,6 +12,11 @@ from indico_sentry import _
 from indico_sentry.defaults import LOGGING_LEVELS
 
 
+def _frontend_only():
+    """Hide a field while the browser SDK is off, without losing its value."""
+    return HiddenUnless('frontend_enabled', preserve_data=True)
+
+
 class SampleRateOverridesField(TextListField):
     """One ``endpoint = rate`` rule per line."""
 
@@ -38,6 +43,11 @@ class SettingsForm(IndicoForm):
         (_('Filtering'), ('ignored_exceptions', 'ignored_loggers', 'ignored_transactions')),
         (_('Privacy'), ('send_default_pii', 'send_user_email', 'send_request_body', 'scrub_fields')),
         (_('Indico context'), ('event_context', 'category_context')),
+        (_('Frontend (browser)'), ('frontend_enabled', 'frontend_dsn', 'frontend_environment', 'frontend_release',
+                                   'frontend_traces_sample_rate', 'frontend_replay_session_sample_rate',
+                                   'frontend_replay_error_sample_rate', 'frontend_link_traces',
+                                   'frontend_trace_propagation_targets', 'frontend_ignored_errors',
+                                   'frontend_denied_urls', 'frontend_sdk_url')),
     ]
 
     # --- Connection ---------------------------------------------------------
@@ -120,7 +130,65 @@ class SettingsForm(IndicoForm):
     category_context = BooleanField(_('Category context'), widget=SwitchWidget(),
                                     description=_('Tag events with the category being accessed.'))
 
+    # --- Frontend -----------------------------------------------------------
+    # Everything below is hidden while the frontend is off, but keeps its data
+    # so that turning the switch back on does not mean re-entering the DSN.
+    frontend_enabled = BooleanField(_('Report browser errors'), widget=SwitchWidget(),
+                                    description=_('Load the Sentry JavaScript SDK on every Indico page so that '
+                                                  'errors happening in the browser are reported too. Needs a DSN '
+                                                  'of its own below. Applied without a restart.'))
+    frontend_dsn = IndicoPasswordField(_('Browser DSN'), [_frontend_only()], toggle=True,
+                                       description=_('The DSN of the Sentry project that receives browser errors. '
+                                                     'Use a separate project from the server one: it is public (it '
+                                                     'ends up in the HTML of every page) and browser errors are far '
+                                                     'noisier than server errors.'))
+    frontend_environment = StringField(_('Browser environment'), [_frontend_only()],
+                                       description=_('Environment reported by the browser SDK. Defaults to the '
+                                                     'server-side environment above.'))
+    frontend_release = StringField(_('Browser release'), [_frontend_only()],
+                                   description=_('Release reported by the browser SDK. Defaults to the server-side '
+                                                 'release above.'))
+    frontend_traces_sample_rate = FloatField(_('Browser trace sample rate'),
+                                             [_frontend_only(), Optional(), NumberRange(min=0, max=1)],
+                                             description=_('Fraction of page loads to trace in the browser. Above 0 '
+                                                           'this loads a larger SDK bundle.'))
+    frontend_replay_session_sample_rate = FloatField(_('Session replay sample rate'),
+                                                     [_frontend_only(), Optional(), NumberRange(min=0, max=1)],
+                                                     description=_('Fraction of sessions to record as a replay. Text '
+                                                                   'is masked and media blocked. Above 0 this loads a '
+                                                                   'considerably larger SDK bundle.'))
+    frontend_replay_error_sample_rate = FloatField(_('Replay on error sample rate'),
+                                                   [_frontend_only(), Optional(), NumberRange(min=0, max=1)],
+                                                   description=_('Fraction of sessions that hit an error to record '
+                                                                 'as a replay, on top of the rate above.'))
+    frontend_link_traces = BooleanField(_('Link browser and server traces'), [_frontend_only()],
+                                        widget=SwitchWidget(),
+                                        description=_('Add sentry-trace and baggage meta tags so a page load and the '
+                                                      'request that produced it show up as one trace. Only has an '
+                                                      'effect on requests the server actually traced.'))
+    frontend_trace_propagation_targets = TextListField(
+        _('Trace propagation targets'), [_frontend_only()],
+        description=_('One URL or regex per line that browser requests may carry trace headers to. Leave empty to '
+                      'use the SDK default, which is same-origin requests only.'))
+    frontend_ignored_errors = TextListField(_('Ignored browser errors'), [_frontend_only()],
+                                            description=_('One error message per line; a message containing the text '
+                                                          'is dropped. The defaults cover the usual browser noise.'))
+    frontend_denied_urls = TextListField(_('Denied script URLs'), [_frontend_only()],
+                                         description=_('One URL fragment per line. Errors raised by scripts from '
+                                                       'these URLs are dropped; the defaults keep browser extensions '
+                                                       'out of your Sentry project.'))
+    frontend_sdk_url = StringField(_('Custom SDK URL'), [_frontend_only()],
+                                   description=_("Load the JavaScript SDK from here instead of Sentry's CDN, e.g. a "
+                                                 'self-hosted copy. Leave empty unless you know you need it: the '
+                                                 'bundled URL is version-pinned and checksum-verified.'))
+
     def validate_dsn(self, field):
+        self._validate_dsn(field)
+
+    def validate_frontend_dsn(self, field):
+        self._validate_dsn(field)
+
+    def _validate_dsn(self, field):
         if not field.data:
             return
         try:
@@ -130,3 +198,9 @@ class SettingsForm(IndicoForm):
             pass
         except Exception:
             raise ValidationError(_('This does not look like a valid Sentry DSN.'))
+
+    def validate_frontend_sdk_url(self, field):
+        if not field.data:
+            return
+        if not field.data.strip().startswith(('https://', '/')):
+            raise ValidationError(_('The SDK URL must be an https:// URL or an absolute path.'))

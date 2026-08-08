@@ -13,7 +13,6 @@ its transport thread does not leak.
 
 import logging
 from importlib.metadata import entry_points
-from urllib.parse import urlsplit
 
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
@@ -24,7 +23,7 @@ from indico.core.config import config
 
 from indico_sentry import __version__ as plugin_version
 from indico_sentry.hooks import SETTINGS, before_send, before_send_transaction, profiles_sampler, traces_sampler
-from indico_sentry.util import INIT_ONLY_SETTINGS
+from indico_sentry.util import INIT_ONLY_SETTINGS, dsn_host
 
 
 logger = logging.getLogger('indico.plugin.sentry')
@@ -87,7 +86,7 @@ def init_sentry(settings, **extra_options):
         environment=options['environment'],
         release=options['release'],
         integrations=sorted(type(i).__name__ for i in options['integrations']),
-        dsn_host=_dsn_host(options['dsn']),
+        dsn_host=dsn_host(options['dsn']),
         snapshot=snapshot_init_settings(settings),
     )
     if options['dsn']:
@@ -244,13 +243,3 @@ def _drop_unsupported(options):
                        key, getattr(sentry_sdk, 'VERSION', '?'))
         del options[key]
     return options
-
-
-def _dsn_host(dsn):
-    if not dsn:
-        return None
-    try:
-        url = urlsplit(dsn)
-        return url.netloc.rpartition('@')[2] or None
-    except Exception:
-        return None

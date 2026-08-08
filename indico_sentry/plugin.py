@@ -3,7 +3,8 @@
 Indico core initialises Sentry from ``indico.conf`` before plugins are loaded.
 This plugin replaces that client with one that can be configured from the
 admin area and that knows about Celery, SQLAlchemy, Indico events and Indico
-endpoints.
+endpoints.  It also injects Sentry's JavaScript SDK into every page so that
+browser errors are reported to a Sentry project of their own.
 """
 
 import copy
@@ -19,6 +20,7 @@ from indico_sentry.client import init_sentry, is_sending, pending_restart_settin
 from indico_sentry.context import set_rh_context
 from indico_sentry.defaults import DEFAULT_SETTINGS
 from indico_sentry.forms import SettingsForm
+from indico_sentry.frontend import csp_script_source, frontend_context, frontend_summary
 from indico_sentry.hooks import SETTINGS
 
 
@@ -29,8 +31,9 @@ class SentryPlugin(IndicoPlugin):
 
     On top of the basic Sentry support built into Indico this adds Celery and
     SQLAlchemy integrations, Indico event/category context, performance
-    tracing, and error filtering and scrubbing rules that can be managed from
-    here instead of ``indico.conf``.
+    tracing, error filtering and scrubbing rules that can be managed from here
+    instead of ``indico.conf``, and browser-side error reporting through a
+    Sentry project of its own.
     """
 
     configurable = True
@@ -48,6 +51,9 @@ class SentryPlugin(IndicoPlugin):
         'ignored_loggers': {'rows': 4},
         'ignored_transactions': {'rows': 4},
         'scrub_fields': {'rows': 8},
+        'frontend_trace_propagation_targets': {'rows': 3},
+        'frontend_ignored_errors': {'rows': 6},
+        'frontend_denied_urls': {'rows': 5},
     }
 
     def init(self):
@@ -58,7 +64,12 @@ class SentryPlugin(IndicoPlugin):
         self.connect(signals.core.app_created, self._app_created)
         self.connect(signals.rh.process_args, set_rh_context)
         self.connect(signals.plugin.cli, lambda sender, **kwargs: cli)
+        # Indico only grew Content-Security-Policy support in 3.3.10; on older
+        # versions there is no script-src for us to add the SDK host to.
+        if csp_signal := getattr(signals.core, 'get_csp_script_sources', None):
+            self.connect(csp_signal, self._get_csp_script_sources)
         self.template_hook('plugin-details', self._inject_details)
+        self.template_hook('html-head', self._inject_frontend)
 
     def get_blueprints(self):
         return blueprint
@@ -77,15 +88,43 @@ class SentryPlugin(IndicoPlugin):
             active=is_sending(),
             sdk_version=getattr(sentry_sdk, 'VERSION', '?'),
             pending=self._pending_restart_settings(),
+            frontend=self._frontend_summary(),
             test_url=url_for_plugin('sentry.test'),
             reload_url=url_for_plugin('sentry.reload'),
         )
 
+    def _inject_frontend(self, **kwargs):
+        """Boot the browser SDK in the ``<head>`` of every Indico page."""
+        try:
+            if (context := frontend_context()) is None:
+                return ''
+            tpl = get_plugin_template_module('_frontend.html')
+            return tpl.render_frontend(context)
+        except Exception:
+            # This runs on every single page; error reporting is never worth
+            # breaking one over.
+            self.logger.debug('Could not render the Sentry frontend snippet', exc_info=True)
+            return ''
+
+    def _get_csp_script_sources(self, sender, **kwargs):
+        """Let the SDK be loaded when the instance runs with a strict CSP."""
+        return csp_script_source()
+
+    def _saved_settings(self):
+        saved = dict(DEFAULT_SETTINGS)
+        saved.update(self.settings.get_all())
+        return saved
+
     def _pending_restart_settings(self):
         try:
-            saved = dict(DEFAULT_SETTINGS)
-            saved.update(self.settings.get_all())
-            return pending_restart_settings(saved)
+            return pending_restart_settings(self._saved_settings())
         except Exception:
             self.logger.debug('Could not determine pending Sentry settings', exc_info=True)
             return []
+
+    def _frontend_summary(self):
+        try:
+            return frontend_summary(self._saved_settings())
+        except Exception:
+            self.logger.debug('Could not summarise the Sentry frontend settings', exc_info=True)
+            return None

@@ -6,6 +6,7 @@ import sentry_sdk
 from indico.cli.core import cli_group
 
 from indico_sentry.client import is_sending, status
+from indico_sentry.frontend import SDK_VERSION, frontend_summary
 from indico_sentry.hooks import SETTINGS
 from indico_sentry.util import INIT_ONLY_SETTINGS
 
@@ -29,10 +30,19 @@ def info():
         click.secho(f'error:         {status["error"]}', fg='red')
 
     settings = SETTINGS.get()
+
+    frontend = frontend_summary(settings)
+    click.echo(f'\nBrowser SDK (sentry-javascript {SDK_VERSION}):')
+    click.echo(f'  enabled:     {_yesno(frontend["enabled"])}')
+    click.echo(f'  DSN:         {frontend["dsn_host"] or "(not configured)"}')
+    click.echo(f'  environment: {frontend["environment"]}')
+    click.echo(f'  release:     {frontend["release"]}')
+    click.echo(f'  bundle:      {frontend["sdk_url"]}')
+
     click.echo('\nSettings (* = requires a restart to take effect):')
     for key in sorted(settings):
         marker = '*' if key in INIT_ONLY_SETTINGS else ' '
-        value = '<set>' if key == 'dsn' and settings[key] else settings[key]
+        value = '<set>' if key in ('dsn', 'frontend_dsn') and settings[key] else settings[key]
         click.echo(f'  {marker} {key} = {value}')
 
 

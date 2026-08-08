@@ -97,7 +97,8 @@ jobs:
           import pathlib, zipfile, sys
           wheel = next(pathlib.Path('dist').glob('*.whl'))
           names = zipfile.ZipFile(wheel).namelist()
-          missing = [n for n in ('indico_sentry/templates/_details.html',) if n not in names]
+          templates = ('indico_sentry/templates/_details.html', 'indico_sentry/templates/_frontend.html')
+          missing = [n for n in templates if n not in names]
           if missing:
               sys.exit(f'missing from {wheel.name}: {missing}')
           print(f'{wheel.name} looks good')

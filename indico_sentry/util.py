@@ -10,6 +10,7 @@ must never raise.
 import threading
 import time
 from contextlib import contextmanager
+from urllib.parse import urlsplit
 
 
 #: How long runtime settings are cached inside a process before being re-read
@@ -149,6 +150,26 @@ def exception_names(exc):
             if name not in seen:
                 seen.add(name)
                 yield name
+
+
+def dsn_host(dsn):
+    """Return the host a DSN points at, without the secret in front of it."""
+    if not dsn:
+        return None
+    try:
+        return urlsplit(dsn).netloc.rpartition('@')[2] or None
+    except Exception:
+        return None
+
+
+def dsn_origin(dsn):
+    """Return the origin a DSN sends to, e.g. for a ``connect-src`` CSP entry."""
+    if not (host := dsn_host(dsn)):
+        return None
+    try:
+        return f'{urlsplit(dsn).scheme or "https"}://{host}'
+    except Exception:
+        return None
 
 
 def scrub_mapping(data, keys, replacement='[Filtered]', _depth=0):
