@@ -81,6 +81,10 @@ Three lists, one entry per line:
 Transactions are named after the Indico **endpoint** (`events.display`), not the URL rule — that is
 what these lists and the sample-rate overrides match against.
 
+The defaults also silence WeasyPrint (`weasyprint*`), which warns once per glyph the installed fonts
+lack, and the font library underneath it (`fontTools*`), so a single PDF with text the fonts cannot
+render does not turn into hundreds of events.
+
 ### Privacy
 
 - **Send personal data** off → no user, cookies, request body or auth headers leave the server.
@@ -121,6 +125,13 @@ The privacy settings are shared with the server side: turning **Send personal da
 the browser SDK from attaching the user, and **Send user email and name** decides whether it sends
 more than the numeric user id. Session replays are always masked.
 
+The SDK is loaded with `defer`, so errors that happen before it is up are held back and reported once
+it is. They are marked as unhandled, like any other uncaught error, and tagged
+`indico_sentry.buffered`. If Indico's own scripts did not load (there is no jQuery on the page, as
+happens with crawlers that skip subresources), every inline script on the page fails on its own and
+those failures say nothing about a bug. They are then reported as a single
+`Indico page bundles did not load` warning, with the first error attached.
+
 None of the frontend settings need a restart — the snippet is rebuilt from the settings on every
 page render.
 
@@ -158,6 +169,22 @@ TTL). The settings page tells you which saved settings the current worker has no
 **Reload in this worker** rebuilds the client in the single process that served the page. It is meant
 for testing a new DSN, not as a substitute for a restart.
 
+## Upgrading
+
+The default filter lists only apply until the settings form has been saved for the first time. From
+then on the lists stored in the database win, so new defaults never reach an existing installation by
+themselves. After upgrading, add what is missing on the plugin page. Added in 1.1.1:
+
+| List | New entries |
+|---|---|
+| Ignored browser errors | `Network Error`, `Java object is gone`, `window.webkit.messageHandlers`, `"@context"].toLowerCase` |
+| Denied script URLs | `iabjs://` |
+| Ignored loggers | `weasyprint*`, `fontTools*` |
+
+These cover Axios' wording for a dropped connection (what Indico's own requests use), scripts injected
+by the Instagram and Facebook in-app browsers, and Safari's JSON-LD reader tripping over the array
+Indico's category pages emit.
+
 ## Verifying it works
 
 From the settings page use **Send test event**, or from the command line:
@@ -173,6 +200,11 @@ indico sentry test --crash   # send a real exception with a stack trace
 Core calls `sentry_sdk.init()` in `make_app()` before plugins are loaded. This plugin re-initialises
 the SDK on the `app_created` signal, which replaces the global client and closes the old one. If you
 remove the plugin, core's client stays in charge and keeps using `indico.conf`.
+
+Reading the plugin settings is a database query, and `make_app()` complains about a populated
+connection pool right after `app_created` (uWSGI forks its workers afterwards; with `DEBUG = True`
+Indico refuses to start). The plugin therefore returns its connection and empties the pool again
+before core looks.
 
 The browser snippet goes in through the `html-head` template hook, so it is on every page that uses
 Indico's standard layout. Indico rewrites the inline `<script>` to carry the page's CSP nonce.

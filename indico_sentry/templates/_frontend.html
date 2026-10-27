@@ -28,7 +28,12 @@
             // breaks during it and report it once Sentry is up.
             function remember(evt) {
                 if (pending.length < 10) {
-                    pending.push((evt && (evt.error || evt.reason)) || (evt && evt.message) || 'Unknown error');
+                    pending.push({
+                        error: (evt && (evt.error || evt.reason)) || (evt && evt.message) || 'Unknown error',
+                        // Same names the SDK's own global handlers use.
+                        mechanism: 'auto.browser.global_handlers.' +
+                            (evt && evt.type === 'unhandledrejection' ? 'onunhandledrejection' : 'onerror'),
+                    });
                 }
             }
 
@@ -68,9 +73,36 @@
                 if (tags) {
                     Sentry.setTags(tags);
                 }
+                replay(Sentry, buffered);
+            }
+
+            function replay(Sentry, buffered) {
+                var replayTags = {'indico_sentry.buffered': 'yes'};
+                if (buffered.length && typeof window.jQuery === 'undefined') {
+                    // Indico's own scripts are loaded before this one runs, so
+                    // without jQuery they never made it (a crawler that does not
+                    // fetch subresources, or a broken asset deployment).  Every
+                    // inline script on the page then fails with a ReferenceError
+                    // of its own, which says nothing about a bug in the code:
+                    // report the page once instead of each of its symptoms.
+                    try {
+                        Sentry.captureMessage('Indico page bundles did not load', {
+                            level: 'warning',
+                            tags: replayTags,
+                            extra: {errors: buffered.length, first_error: String(buffered[0].error)},
+                        });
+                    } catch (e) {
+                        // Nothing useful left to do if reporting itself fails.
+                    }
+                    return;
+                }
                 for (var i = 0; i < buffered.length; i++) {
                     try {
-                        Sentry.captureException(buffered[i]);
+                        // They were uncaught, even though the SDK only learns of them now.
+                        Sentry.captureException(buffered[i].error, {
+                            mechanism: {type: buffered[i].mechanism, handled: false},
+                            captureContext: {tags: replayTags},
+                        });
                     } catch (e) {
                         // Nothing useful left to do if reporting itself fails.
                     }

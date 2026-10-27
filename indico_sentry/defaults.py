@@ -28,6 +28,12 @@ DEFAULT_SCRUB_FIELDS = [
 DEFAULT_IGNORED_LOGGERS = [
     'indico.flask',
     'werkzeug',
+    # WeasyPrint warns once per glyph the installed fonts lack, so a single PDF
+    # with CJK names produced 127 events in 3 seconds.  Missing fonts are an
+    # installation problem, not a code one.  fontTools, which it uses to embed
+    # fonts, gets the same treatment.
+    'weasyprint*',
+    'fontTools*',
 ]
 
 #: Exceptions that are part of normal operation and not worth an alert.
@@ -49,8 +55,9 @@ DEFAULT_IGNORED_TRANSACTIONS = [
 ]
 
 #: Browser errors that are noise rather than bugs: layout callbacks browsers
-#: fire on themselves, and the failures every page gets when a visitor loses
-#: connectivity or navigates away mid-request.
+#: fire on themselves, the failures every page gets when a visitor loses
+#: connectivity or navigates away mid-request, and errors from code that
+#: browsers or apps inject into the page.  The SDK matches these as substrings.
 DEFAULT_FRONTEND_IGNORED_ERRORS = [
     'ResizeObserver loop limit exceeded',
     'ResizeObserver loop completed with undelivered notifications',
@@ -59,16 +66,22 @@ DEFAULT_FRONTEND_IGNORED_ERRORS = [
     'Failed to fetch',
     'Load failed',
     'AbortError',
+    'Network Error',  # axios' wording, which is what all of Indico's own requests use
+    'Java object is gone',  # Instagram/Facebook in-app browser on Android
+    'window.webkit.messageHandlers',  # Instagram/Facebook in-app browser on iOS
+    '"@context"].toLowerCase',  # Safari's JSON-LD reader tripping over a top-level array
 ]
 
-#: Scripts that are not ours.  Browser extensions inject code into every page
-#: and their exceptions would otherwise show up as Indico errors.
+#: Scripts that are not ours.  Browser extensions and in-app browsers inject
+#: code into every page and their exceptions would otherwise show up as Indico
+#: errors.
 DEFAULT_FRONTEND_DENIED_URLS = [
     'chrome-extension://',
     'chrome://',
     'moz-extension://',
     'safari-extension://',
     'safari-web-extension://',
+    'iabjs://',  # scripts injected by the Instagram/Facebook in-app browser
 ]
 
 DEFAULT_SETTINGS = {

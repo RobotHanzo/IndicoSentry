@@ -3,6 +3,6 @@
 from indico.util.i18n import make_bound_gettext
 
 
-__version__ = '1.1.0'
+__version__ = '1.1.1'
 
 _ = make_bound_gettext('sentry')

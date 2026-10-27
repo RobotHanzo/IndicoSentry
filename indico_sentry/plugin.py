@@ -12,6 +12,7 @@ import copy
 import sentry_sdk
 
 from indico.core import signals
+from indico.core.db import db
 from indico.core.plugins import IndicoPlugin, get_plugin_template_module, url_for_plugin
 
 from indico_sentry.blueprint import blueprint
@@ -76,7 +77,16 @@ class SentryPlugin(IndicoPlugin):
 
     def _app_created(self, app, **kwargs):
         SETTINGS.invalidate()
-        init_sentry(SETTINGS.get())
+        try:
+            init_sentry(SETTINGS.get())
+        finally:
+            # Reading our settings is a database query, and core's check_db() runs
+            # right after app_created: uwsgi forks its workers after make_app(), so
+            # the pool must be empty by then.  Without this core logs a warning (which
+            # we then send to Sentry) on every start, and refuses to start at all
+            # when DEBUG is on.
+            db.session.remove()
+            db.engine.dispose()
 
     def _inject_details(self, plugin, **kwargs):
         # This hook fires for every plugin's details page.

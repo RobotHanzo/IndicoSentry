@@ -7,13 +7,19 @@ drifting apart, which would only show up as a broken admin page at runtime.
 from pathlib import Path
 
 import pytest
+from flask import Flask
 from jinja2 import Environment
+from sqlalchemy import text
+from sqlalchemy.pool import QueuePool
 from wtforms.fields.core import UnboundField
+
+from indico.core.db import db
 
 import indico_sentry
 from indico_sentry.blueprint import blueprint
 from indico_sentry.defaults import DEFAULT_SETTINGS, LOGGING_LEVELS
 from indico_sentry.forms import SettingsForm
+from indico_sentry.hooks import SETTINGS
 from indico_sentry.plugin import SentryPlugin
 from indico_sentry.util import INIT_ONLY_SETTINGS
 
@@ -101,6 +107,67 @@ class TestBlueprint:
         for deferred in blueprint.deferred_functions:
             deferred(_FakeSetupState(app))
         assert set(app.rules) == {'/admin/plugins/sentry/test', '/admin/plugins/sentry/reload'}
+
+
+class TestAppCreated:
+    """Core's make_app() inspects the connection pool right after ``app_created``.
+
+    Anything left in it is logged as a warning, and with ``DEBUG`` on it aborts
+    startup altogether - uwsgi forks its workers after ``make_app()``.
+    """
+
+    @pytest.fixture
+    def db_app(self, tmp_path):
+        # sqlite would not get a QueuePool by default, which is what core configures.
+        app = Flask('indico_sentry_tests')
+        app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{tmp_path / "pool.db"}'
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'poolclass': QueuePool}
+        db.init_app(app)
+        with app.app_context():
+            yield app
+            db.session.remove()
+            db.engine.dispose()
+
+    @pytest.fixture
+    def settings_in_db(self, monkeypatch):
+        """Make loading the settings do what it does for real: query the database."""
+        def load():
+            db.session.execute(text('SELECT 1'))
+            return {**DEFAULT_SETTINGS, 'environment': 'from-the-database'}
+
+        monkeypatch.setattr(SETTINGS, '_load', load)
+
+    @pytest.fixture
+    def applied(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr('indico_sentry.plugin.init_sentry', calls.append)
+        return calls
+
+    @staticmethod
+    def pool_is_empty():
+        return db.engine.pool.checkedin() == 0 and db.engine.pool.checkedout() == 0
+
+    def test_reading_the_settings_populates_the_pool(self, db_app, settings_in_db):
+        # What the tests below rely on: without cleanup core would complain.
+        SETTINGS.get()
+        assert not self.pool_is_empty()
+
+    def test_leaves_the_pool_empty(self, db_app, settings_in_db, applied):
+        SentryPlugin._app_created(None, db_app)
+        assert self.pool_is_empty()
+
+    def test_still_uses_the_settings_from_the_database(self, db_app, settings_in_db, applied):
+        SentryPlugin._app_created(None, db_app)
+        assert [settings['environment'] for settings in applied] == ['from-the-database']
+
+    def test_leaves_the_pool_empty_when_init_fails(self, db_app, settings_in_db, monkeypatch):
+        def broken(settings):
+            raise RuntimeError('boom')
+
+        monkeypatch.setattr('indico_sentry.plugin.init_sentry', broken)
+        with pytest.raises(RuntimeError, match='boom'):
+            SentryPlugin._app_created(None, db_app)
+        assert self.pool_is_empty()
 
 
 class TestTemplate:

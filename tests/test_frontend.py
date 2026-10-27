@@ -9,6 +9,7 @@ fetched.
 import json
 from pathlib import Path
 
+import pytest
 from jinja2 import Environment
 
 import indico
@@ -79,6 +80,29 @@ class TestInitOptions:
         options = init_options(settings())
         assert 'ResizeObserver loop limit exceeded' in options['ignoreErrors']
         assert 'chrome-extension://' in options['denyUrls']
+
+    @pytest.mark.parametrize(('message', 'issue'), (
+        ('Error invoking postMessage: Java object is gone', 'Instagram Android in-app browser'),
+        ("undefined is not an object (evaluating 'window.webkit.messageHandlers')", 'Instagram iOS in-app browser'),
+        ("undefined is not an object (evaluating 'r[\"@context\"].toLowerCase')", "Safari's JSON-LD reader"),
+        ('AxiosError: Network Error', 'a dropped connection seen through axios'),
+    ))
+    def test_default_ignored_errors_cover_known_noise(self, app_ctx, message, issue):
+        # The SDK drops an error whose message merely *contains* an entry.
+        ignored = init_options(settings())['ignoreErrors']
+        assert any(entry in message for entry in ignored), issue
+
+    def test_default_ignored_errors_keep_real_failures(self, app_ctx):
+        ignored = init_options(settings())['ignoreErrors']
+        for message in ("Cannot read properties of undefined (reading 'foo')",
+                        'AxiosError: Request failed with status code 500',
+                        '$ is not defined'):
+            assert not any(entry in message for entry in ignored), message
+
+    def test_default_denied_urls_cover_in_app_browsers(self, app_ctx):
+        denied = init_options(settings())['denyUrls']
+        assert any(entry in 'iabjs://navigation_performance_logger_android' for entry in denied)
+        assert not any(entry in 'https://event.example.com/static/dist/js/main.js' for entry in denied)
 
     def test_empty_lists_are_left_out(self, app_ctx):
         # An empty option is not the same as an unset one; `tracePropagationTargets: []`
@@ -189,6 +213,24 @@ class TestSnippet:
         # opening tag with attributes would silently miss out on that.
         source = (Path(indico_sentry.__file__).parent / 'templates' / '_frontend.html').read_text(encoding='utf-8')
         assert '\n    <script>\n' in source
+
+    def test_default_filters_reach_the_page(self, app_ctx):
+        html = render(frontend_context(settings()))
+        assert 'Java object is gone' in html
+        assert 'iabjs://' in html
+
+    def test_buffered_errors_are_reported_as_uncaught(self, app_ctx):
+        # Errors from before the SDK loaded are replayed afterwards; they must
+        # not be passed off as caught by the application.
+        html = render(frontend_context(settings()))
+        assert 'handled: false' in html
+        assert 'auto.browser.global_handlers.' in html
+        assert 'indico_sentry.buffered' in html
+
+    def test_a_page_without_its_bundles_is_reported_once(self, app_ctx):
+        html = render(frontend_context(settings()))
+        assert "typeof window.jQuery === 'undefined'" in html
+        assert 'Indico page bundles did not load' in html
 
     def test_the_smallest_bundle_is_used_by_default(self, app_ctx):
         html = render(frontend_context(settings()))

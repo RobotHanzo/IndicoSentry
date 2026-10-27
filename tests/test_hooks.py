@@ -53,6 +53,14 @@ class TestBeforeSendFiltering:
         settings['ignored_loggers'] = ['noisy.*']
         assert hooks.before_send(make_event(), {'log_record': Record()}) is None
 
+    @pytest.mark.parametrize('name', ('weasyprint', 'weasyprint.progress', 'fontTools', 'fontTools.subset'))
+    def test_default_filters_drop_pdf_library_noise(self, name):
+        # One PDF with CJK names made WeasyPrint warn once per missing glyph.
+        assert hooks.before_send(make_event(logger=name), {}) is None
+
+    def test_default_filters_keep_indico_loggers(self):
+        assert hooks.before_send(make_event(logger='indico.db'), {}) is not None
+
     def test_drops_ignored_exception(self, settings):
         settings['ignored_exceptions'] = ['ValueError']
         hint = {'exc_info': (ValueError, ValueError('boom'), None)}
